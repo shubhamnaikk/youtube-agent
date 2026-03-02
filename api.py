@@ -32,6 +32,10 @@ if api_key:
 else:
     print("WARNING: No GEMINI_API_KEY found in .env file.")
 
+@app.get("/")
+async def health_check():
+    return {"status": "ok", "message": "Video Summarizer API is running"}
+
 class AnalyzeRequest(BaseModel):
     url: str
     prompt: str
