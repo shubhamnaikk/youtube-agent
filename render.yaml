@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: video-summarizer-api
+    env: docker
+    region: ohio # or your preferred region
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false # You must add your API key manually in the Render Dashboard

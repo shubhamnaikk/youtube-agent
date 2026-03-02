@@ -1,0 +1,17 @@
+{
+    "manifest_version": 3,
+    "name": "YouTube Summarizer",
+    "version": "1.0",
+    "description": "Summarize YouTube videos using AI",
+    "permissions": [
+        "activeTab",
+        "scripting"
+    ],
+    "action": {
+        "default_popup": "popup.html",
+        "default_icon": "icon.png"
+    },
+    "host_permissions": [
+        "http://localhost:8000/*"
+    ]
+}
