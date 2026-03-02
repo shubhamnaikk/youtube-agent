@@ -65,10 +65,19 @@ async def summarize_video(request: AnalyzeRequest):
     try:
         # Step 1: Get Video Subtitles (Bypasses Render bot detection)
         print(f"Extracting transcript for video ID: {video_id}")
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        transcript_api = YouTubeTranscriptApi()
+        t_list = transcript_api.list(video_id)
+        
+        try:
+            transcript = t_list.find_transcript(['en', 'en-US', 'en-GB'])
+        except Exception:
+            # Fallback to the first available language if English is missing
+            transcript = list(t_list)[0]
+            
+        transcript_data = transcript.fetch()
         
         # Combine all text pieces
-        transcript_text = " ".join([item['text'] for item in transcript_list])
+        transcript_text = " ".join([item.text for item in transcript_data])
         print(f"Successfully extracted {len(transcript_text)} characters of transcript.")
 
         # Step 2: Analyze via Gemini
