@@ -2,11 +2,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
-import time
-import tempfile
+import re
 from pathlib import Path
 from dotenv import load_dotenv
-import yt_dlp
+from youtube_transcript_api import YouTubeTranscriptApi
 import google.generativeai as genai
 
 load_dotenv()
@@ -40,6 +39,14 @@ class AnalyzeRequest(BaseModel):
     url: str
     prompt: str
 
+def extract_video_id(url: str):
+    # Regex to extract video ID from various YouTube URL formats
+    pattern = r'(?:v=|\/)([0-9A-Za-z_-]{11}).*'
+    match = re.search(pattern, url)
+    if match:
+        return match.group(1)
+    return None
+
 @app.post("/summarize")
 async def summarize_video(request: AnalyzeRequest):
     youtube_url = request.url
@@ -51,53 +58,33 @@ async def summarize_video(request: AnalyzeRequest):
     if not api_key:
         raise HTTPException(status_code=500, detail="Gemini API key is not configured.")
 
-    audio_path = None
-    processed_file = None
+    video_id = extract_video_id(youtube_url)
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL. Could not extract video ID.")
+
     try:
-        # Step 1: Download Audio from YouTube
-        print(f"Analyzing video: {youtube_url}")
-        ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio',
-            'outtmpl': tempfile.gettempdir() + '/%(id)s.%(ext)s',
-            'quiet': True,
-            'no_warnings': True,
-            'extractor_args': {'youtube': {'player_client': ['ios']}},
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
-                'Accept-Language': 'en-US,en;q=0.9',
-            }
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=True)
-            audio_path = ydl.prepare_filename(info)
-
-        # Step 2: Upload to Gemini API
-        print("Coming Up with the solution...")
-        processed_file = genai.upload_file(audio_path)
+        # Step 1: Get Video Subtitles (Bypasses Render bot detection)
+        print(f"Extracting transcript for video ID: {video_id}")
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
         
-        while processed_file.state.name == "PROCESSING":
-            print(".", end="", flush=True)
-            time.sleep(2)
-            processed_file = genai.get_file(processed_file.name)
-        
-        if processed_file.state.name == "FAILED":
-            raise Exception("Gemini audio processing failed.")
+        # Combine all text pieces
+        transcript_text = " ".join([item['text'] for item in transcript_list])
+        print(f"Successfully extracted {len(transcript_text)} characters of transcript.")
 
-        print("\nAudio uploaded and ready.")
-
-        # Step 3: Analyze via Gemini
+        # Step 2: Analyze via Gemini
         print(f"Generating notes for prompt: '{custom_prompt}'...")
         # We use gemini-1.5-flash as the standard robust model
         model = genai.GenerativeModel('gemini-flash-lite-latest')
         
         full_prompt = (
-            f"You are a helpful YouTube video transcriber and assistant.\n"
-            f"The user has provided an audio file of a video and asked the following:\n\n"
+            f"You are a helpful YouTube video reading assistant. "
+            f"The user has provided the full text transcript of a YouTube video and asked the following:\n\n"
             f"--- \n{custom_prompt}\n ---\n\n"
-            f"Please respond specifically to their request using the information from the audio. Format the output in clean Markdown."
+            f"Here is the video transcript:\n\n{transcript_text}\n\n"
+            f"Please respond specifically to their request using the information from the transcript. Format the output in clean Markdown."
         )
 
-        response = model.generate_content([full_prompt, processed_file])
+        response = model.generate_content(full_prompt)
 
         print("Processing complete.")
         return {"summary": response.text}
@@ -105,20 +92,14 @@ async def summarize_video(request: AnalyzeRequest):
     except Exception as e:
         error_msg = str(e)
         print(f"\nError during processing: {error_msg}")
+        
+        if "Subtitles are disabled for this video" in error_msg or "Could not retrieve a transcript" in error_msg:
+            raise HTTPException(status_code=400, detail="This video does not have closed captions or subtitles enabled, so it cannot be analyzed.")
+            
         if "Quota" in error_msg or "429" in error_msg:
             raise HTTPException(status_code=429, detail="Gemini API Quota Exceeded. Please try again later.")
+            
         raise HTTPException(status_code=500, detail=error_msg)
-    finally:
-        # Cleanup temporary audio file locally
-        if audio_path and Path(audio_path).exists():
-            Path(audio_path).unlink(missing_ok=True)
-        # Cleanup file from Gemini servers to save space
-        if processed_file:
-            try:
-                genai.delete_file(processed_file.name)
-                print(f"Deleted file {processed_file.name} from Gemini API.")
-            except Exception as cleanup_err:
-                print(f"Failed to delete file from Gemini: {cleanup_err}")
 
 if __name__ == "__main__":
     import uvicorn

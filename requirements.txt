@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 python-dotenv
-yt-dlp
 google-generativeai
 pydantic
 duckduckgo-search
+youtube-transcript-api
